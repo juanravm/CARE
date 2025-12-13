@@ -1,6 +1,6 @@
 ## Clinical Assessment of Risk in Endometrial Cancer (CARE)
 
-**CLINPRO-EC** is a clinical prognostic modeling project for **Endometrial Cancer**, focused on patients defined as a **Non-Specific Molecular Profile (NMSP)**.
+**CARE** is a clinical prognostic modeling project for **Endometrial Cancer**, focused on patients defined as a **Non-Specific Molecular Profile (NMSP)**.
 
 The goal of the project is to develop a **clinical decision-support tool** that integrates routinely available **clinicopathological variables**, with optional molecular features, to improve **prognosis prediction** in real-world clinical practice.
 
