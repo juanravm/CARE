@@ -2,15 +2,11 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
-from xgboost import XGBClassifier, XGBRegressor
-from xgboost.core import XGBoostError
+from sklearn.base import clone
 from sksurv.linear_model import CoxPHSurvivalAnalysis
 from sksurv.ensemble import RandomSurvivalForest
-import pandas as pd
-try:
-    import cupy as cp  # type: ignore
-except Exception:  # pragma: no cover
-    cp = None
+from sklearn.ensemble import StackingClassifier
+from xgboost import XGBClassifier
 
 
 def make_class_models(random_state=0):
@@ -65,46 +61,6 @@ def make_class_models(random_state=0):
     return models
 
 
-class CoxXGBRegressor(XGBRegressor):
-    """
-    Wrapper de XGBRegressor para aceptar y con campos event/time (Surv o DataFrame)
-    y mapear event -> sample_weight y time -> target.
-    """
-
-    def fit(self, X, y, sample_weight=None, **kwargs):
-        event = None
-        time = y
-        X_in = X
-
-        # Surv o array estructurado
-        if hasattr(y, "dtype") and getattr(y.dtype, "names", None):
-            names = set(y.dtype.names)
-            if {"event", "time"}.issubset(names):
-                event = np.asarray(y["event"], dtype=float)
-                time = np.asarray(y["time"], dtype=float)
-        # DataFrame con columnas event/time
-        elif isinstance(y, pd.DataFrame) and {"event", "time"}.issubset(set(y.columns)):
-            event = y["event"].to_numpy(dtype=float)
-            time = y["time"].to_numpy(dtype=float)
-
-        if event is not None and sample_weight is None:
-            sample_weight = event
-
-        try:
-            return super().fit(X_in, time, sample_weight=sample_weight, **kwargs)
-        except XGBoostError as e:
-            # Fallback a CPU si no hay soporte GPU o si el input es CuPy y XGBoost no lo acepta
-            if "GPU" in str(e) or "gpu" in str(e) or "device" in str(e):
-                X_cpu = cp.asnumpy(X_in) if cp is not None and hasattr(X_in, "__cuda_array_interface__") else X_in
-                cpu_params = self.get_params()
-                cpu_params.update({"tree_method": "hist"})
-                cpu_params.pop("predictor", None)
-                cpu_params.pop("device", None)
-                self.set_params(**cpu_params)
-                return super().fit(X_cpu, time, sample_weight=sample_weight, **kwargs)
-            raise
-
-
 def make_risk_models(random_state=0):
     """
     Risk models for censored survival data.
@@ -136,24 +92,53 @@ def make_risk_models(random_state=0):
                 "model__max_features": ["sqrt", 0.5, 1.0],
             },
         ),
-        "xgb_cox": (
-            CoxXGBRegressor(
-                objective="survival:cox",
-                tree_method="hist",
-                random_state=random_state,
-                device="cuda",
-            ),
-            {
-                "selector__kbest": [10, 20, 40],
-                "model__n_estimators": [400, 800],
-                "model__max_depth": [3, 5],
-                "model__learning_rate": [0.03, 0.1],
-                "model__subsample": [0.8, 1.0],
-                "model__colsample_bytree": [0.8, 1.0],
-                "model__reg_lambda": [1, 3, 10],
-                "model__min_child_weight": [1, 5],
-            },
-        ),
     }
 
     return models
+
+
+class StackingModel:
+    def __init__(self, logres_model, svc_model, rf_model, meta_model=None, cv=5):
+        """
+        Initialize the stacking models with the base models
+        """
+        self.logres_model = logres_model
+        self.svc_model = svc_model
+        self.rf_model = rf_model
+        self.meta_model = meta_model if meta_model else LogisticRegression(random_state=1, max_iter=1000)
+        self.cv = cv
+        self.stack_clf = None
+
+    def fit(self, X, y):
+        """
+        Train stacking model with data X, y
+        """
+        base_learners = [
+            ("logres", clone(self.logres_model)),
+            ("svc", clone(self.svc_model)),
+            ("rf", clone(self.rf_model)),
+        ]
+        self.stack_clf = StackingClassifier(
+            estimators=base_learners,
+            final_estimator=self.meta_model,
+            cv=self.cv,
+            n_jobs=-1,
+            passthrough=False,
+        )
+        self.stack_clf.fit(X, y)
+
+    def predict(self, X):
+        """
+        Predict with the trained model
+        """
+        if self.stack_clf is None:
+            raise ValueError("Model must be trained with .fit(X, y) before predicting.")
+        return self.stack_clf.predict(X)
+
+    def predict_proba(self, X):
+        """
+        Return the prediction probabilities
+        """
+        if self.stack_clf is None:
+            raise ValueError("Model must be trained with .fit(X, y) before predicting.")
+        return self.stack_clf.predict_proba(X)
