@@ -7,8 +7,10 @@ from sklearn.metrics import roc_auc_score, make_scorer
 from sklearn.model_selection import StratifiedKFold, RandomizedSearchCV, KFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+from sklearn.compose import ColumnTransformer
 from sksurv.metrics import concordance_index_censored
 from sksurv.util import Surv
+from sklearn.model_selection import train_test_split
 
 from src.architecture.models import make_class_models, make_risk_models
 from src.preproc.preproc_utils import FCBFSelector, ToCuPy
@@ -33,22 +35,53 @@ df = df.loc[keep, :]
 
 print(f"Training with {df.shape[0]} samples")
 
+
 y_class = df["risk_status"].copy()
 y_event = df["dfs_status"].copy()
 y_time = df["dfs_time"].copy()
-X = df.drop(columns=["risk_status", "dfs_status", "dfs_time", "os_status"])
+X_full = df.drop(columns=["risk_status", "dfs_status", "dfs_time", "os_status"])
 
-# Standard Scale numerical variables
-scaler = StandardScaler()
-cols = ["edad", "imc", "tamano_tumoral"]
-X[cols] = scaler.fit_transform(X[cols])
+scale_cols = [c for c in ["edad", "imc", "tamano_tumoral"] if c in df.columns]
+if scale_cols:
+    preprocessor = ColumnTransformer(
+        [("num_scaler", StandardScaler(), scale_cols)],
+        remainder="passthrough",
+        sparse_threshold=0.0,
+    )
+else:
+    preprocessor = "passthrough"
 
-X_class = X.loc[y_class.notna(), :]
-y_class = y_class.loc[y_class.notna()]
 
-X_surv = X.loc[(y_event.notna()) & (y_time.notna()), :]
-y_time = y_time.loc[(y_event.notna()) & (y_time.notna())]
-y_event = y_event.loc[(y_event.notna()) & (y_time.notna())]
+# Split para clasificación usando solo filas con y_class no nulo (se excluyen solo en el test/train de clasif)
+mask_class = y_class.notna()
+df_class = df.loc[mask_class].copy()
+y_class_clean = y_class.loc[mask_class]
+
+X_class_all = df_class.drop(columns=["risk_status"])
+X_train_cls, X_test_cls, y_train_cls, y_test_cls = train_test_split(
+    X_class_all,
+    y_class_clean,
+    test_size=0.15,
+    stratify=y_class_clean,
+    random_state=0,
+)
+
+# Guardar test set limpio (sin NAs) para clasificación/riesgo
+test_mask = df.index.isin(X_test_cls.index)
+X_test_cls["risk_status"] = y_test_cls
+X_test_cls.to_csv("/home/juanrafaelvalera@vhio.org/ondemand/CARE/data/test_data.tsv", sep="\t")
+
+# Datos de entrenamiento para clasificación
+X_class = X_train_cls.drop(columns=["dfs_status", "dfs_time", "os_status"], errors="ignore")
+y_class = y_train_cls.copy()
+
+# Datos para riesgo: mantener pacientes con y_class NaN si tienen eventos/tiempos
+mask_risk = y_event.notna() & y_time.notna()
+risk_train_mask = mask_risk & ~test_mask
+
+X_surv = X_full.loc[risk_train_mask]
+y_time = y_time.loc[risk_train_mask]
+y_event = y_event.loc[risk_train_mask]
 y_surv = Surv.from_arrays(event=y_event.astype(bool), time=y_time)
 
 # 4) Selector for best features
@@ -79,6 +112,7 @@ for name, (estimator, search_space) in class_models.items():
     if name == "xgb":
         pipe = Pipeline(
             [
+                ("preprocess", preprocessor),
                 ("selector", selector),
                 ("tocupy", ToCuPy()),
                 ("model", estimator),
@@ -87,6 +121,7 @@ for name, (estimator, search_space) in class_models.items():
     else:
         pipe = Pipeline(
             [
+                ("preprocess", preprocessor),
                 ("selector", selector),
                 ("model", estimator),
             ]
@@ -148,6 +183,7 @@ for name, (estimator, search_space) in risk_models.items():
     # Pipeline
     pipe = Pipeline(
         [
+            ("preprocess", preprocessor),
             ("selector", selector),
             ("model", estimator),
         ]
