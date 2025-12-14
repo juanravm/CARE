@@ -61,7 +61,7 @@ X_class_all = df_class.drop(columns=["risk_status"])
 X_train_cls, X_test_cls, y_train_cls, y_test_cls = train_test_split(
     X_class_all,
     y_class_clean,
-    test_size=0.15,
+    test_size=0.2,
     stratify=y_class_clean,
     random_state=0,
 )
@@ -145,6 +145,7 @@ for name, (estimator, search_space) in class_models.items():
         "best_estimator": search.best_estimator_,
     }
     print(f"{name}: AUC={search.best_score_:.3f}")
+    class_table_rows.append([name, search.best_score_, json.dumps(search.best_params_, default=str)])
     if run:
         run.log(
             {
@@ -152,7 +153,6 @@ for name, (estimator, search_space) in class_models.items():
                 f"class/{name}/best_params": json.dumps(search.best_params_, default=str),
             }
         )
-        class_table_rows.append([name, search.best_score_, json.dumps(search.best_params_, default=str)])
 
 # 6b) Stacking model con los mejores logreg, svc y rf
 required_base = ["logreg", "svc", "rf"]
@@ -170,9 +170,9 @@ if all(k in class_results for k in required_base):
         "best_estimator": stack_model,
     }
     print(f"stacking(logreg,svc,rf): AUC={stack_auc:.3f}")
+    class_table_rows.append(["stacking(logreg,svc,rf)", stack_auc, json.dumps({"bases": required_base})])
     if run:
         run.log({"class/stacking/best_auc": stack_auc})
-        class_table_rows.append(["stacking(logreg,svc,rf)", stack_auc, json.dumps({"bases": required_base})])
 
 # 7) Risk models
 risk_results = {}
@@ -207,6 +207,7 @@ for name, (estimator, search_space) in risk_models.items():
     best_score = float(search.best_score_)
     best_params = search.best_params_
     best_estimator = search.best_estimator_
+    risk_table_rows.append([name, best_score, json.dumps(best_params, default=str)])
 
     # Guardar resultados
     risk_results[name] = {
@@ -223,7 +224,6 @@ for name, (estimator, search_space) in risk_models.items():
                 f"risk/{name}/best_params": json.dumps(best_params, default=str),
             }
         )
-        risk_table_rows.append([name, best_score, json.dumps(best_params, default=str)])
 
 if run:
     if class_table_rows:
@@ -231,6 +231,22 @@ if run:
     if risk_table_rows:
         run.log({"risk_results": wandb.Table(columns=["model", "best_cindex", "best_params"], data=risk_table_rows)})
     run.finish()
+
+# 7b) Persist cross-validation metrics locally
+metrics_dir = "artifacts/metrics"
+os.makedirs(metrics_dir, exist_ok=True)
+
+if class_table_rows:
+    class_df = pd.DataFrame(class_table_rows, columns=["model", "best_auc", "best_params"])
+    class_metrics_path = os.path.join(metrics_dir, "class_cv_results.csv")
+    class_df.to_csv(class_metrics_path, index=False)
+    print(f"Resultados de AUC de clasificación guardados en {class_metrics_path}")
+
+if risk_table_rows:
+    risk_df = pd.DataFrame(risk_table_rows, columns=["model", "best_cindex", "best_params"])
+    risk_metrics_path = os.path.join(metrics_dir, "risk_cv_results.csv")
+    risk_df.to_csv(risk_metrics_path, index=False)
+    print(f"Resultados de C-index de riesgo guardados en {risk_metrics_path}")
 
 # 8) Persist best estimators for inference
 models_dir = "artifacts/models"

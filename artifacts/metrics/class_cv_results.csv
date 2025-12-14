@@ -1,0 +1,6 @@
+model,best_auc,best_params
+logreg,0.9355555555555556,"{""selector__kbest"": 20, ""model__l1_ratio"": 1.0, ""model__C"": 1.9306977288832496}"
+svc,0.9248148148148149,"{""selector__kbest"": 20, ""model__kernel"": ""rbf"", ""model__gamma"": 0.01, ""model__C"": 0.06309573444801933}"
+rf,0.9392592592592592,"{""selector__kbest"": 20, ""model__n_estimators"": 400, ""model__min_samples_split"": 5, ""model__max_features"": ""sqrt"", ""model__max_depth"": 10}"
+xgb,0.8848148148148148,"{""selector__kbest"": 20, ""model__subsample"": 1.0, ""model__reg_lambda"": 0.001, ""model__reg_alpha"": 1.0, ""model__n_estimators"": 1200, ""model__max_depth"": 7, ""model__learning_rate"": 0.03, ""model__gamma"": 0.2, ""model__colsample_bytree"": 0.7}"
+"stacking(logreg,svc,rf)",0.9727564102564104,"{""bases"": [""logreg"", ""svc"", ""rf""]}"
