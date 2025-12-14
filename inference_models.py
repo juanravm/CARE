@@ -41,10 +41,6 @@ def load_inference_data(path: str) -> pd.DataFrame:
     drop_cols = [c for c in ["risk_status", "dfs_status", "dfs_time", "os_status"] if c in df.columns]
     if drop_cols:
         df = df.drop(columns=drop_cols)
-    # Standard Scale numerical variables
-    scaler = StandardScaler()
-    cols = ["edad", "imc", "tamano_tumoral"]
-    df[cols] = scaler.fit_transform(df[cols])
     return df
 
 
@@ -69,12 +65,10 @@ def predict_risk_models(models: dict, X: pd.DataFrame) -> pd.DataFrame:
     """
     outputs = {}
     for name, model in models.items():
-        if hasattr(model, "predict_cumulative_hazard_function"):
-            # RandomSurvivalForest: take cumulative hazard at last time
-            chfs = model.predict_cumulative_hazard_function(X)
-            outputs[name] = np.array([fn.y[-1] for fn in chfs])
-        elif hasattr(model, "predict"):
-            outputs[name] = model.predict(X)
+        S_t0 = model.predict_survival_function(X)
+        # Calculating the survival probability at 3 years time
+        S_t0 = 1 - np.array([f(3 * 365) for f in S_t0])
+        outputs[name] = S_t0
     return pd.DataFrame(outputs)
 
 
